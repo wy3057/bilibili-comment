@@ -17,8 +17,9 @@ if platform.system() == "Windows":
 else:
     import select
 
-# 导入我们自己的数据库模块
+# 导入我们自己的模块
 import database as db
+import notifier  # <-- 新增：导入通知模块
 
 
 # --- 核心功能函数 ---
@@ -285,7 +286,8 @@ def wait_with_manual_trigger(interval_seconds):
         time.sleep(0.1)  # 短暂休眠，避免 CPU 占用过高
 
 
-def start_monitoring(targets_to_monitor, header, interval):
+# vvv 修改 vvv
+def start_monitoring(targets_to_monitor, header, interval, webhook_enabled):
     """监控选定视频的新评论，包含获取所有子评论的功能。"""
     video_targets = {}
 
@@ -340,15 +342,23 @@ def start_monitoring(targets_to_monitor, header, interval):
                                 new_comments_found.append(new_hidden_comment)
 
                 if new_comments_found:
+                    # 对新评论按时间排序
+                    sorted_comments = sorted(new_comments_found, key=lambda x: x['time'])
+
+                    # 控制台打印
                     print("*" * 25)
-                    print(f"🔥【{title}】发现 {len(new_comments_found)} 则新评论！")
+                    print(f"🔥【{title}】发现 {len(sorted_comments)} 则新评论！")
                     print("*" * 25)
-                    for new_comment in sorted(new_comments_found, key=lambda x: x['time']):
+                    for new_comment in sorted_comments:
                         print(f"  类型: {new_comment['type']}")
                         print(f"  用户: {new_comment['user']}")
                         print(f"  评论: {new_comment['message']}")
                         print(f"  时间: {new_comment['time'].strftime('%Y-%m-%d %H:%M:%S')}")
                         print("-" * 25)
+
+                    # 如果启用了 Webhook，则发送通知
+                    if webhook_enabled:
+                        notifier.send_webhook_notification(title, sorted_comments)
 
                 time.sleep(3)  # 检查完一个视频后短暂休息，防止请求过快
 
@@ -364,6 +374,9 @@ def start_monitoring(targets_to_monitor, header, interval):
             time.sleep(60)
 
 
+# ^^^ 修改 ^^^
+
+
 if __name__ == "__main__":
     try:
         import requests
@@ -376,6 +389,7 @@ if __name__ == "__main__":
     targets = display_main_menu()
 
     if targets:
+        # 获取监控间隔
         interval_minutes = 5
         try:
             user_input = input(f"\n请输入检查间隔（分钟，直接按 Enter 使用默认值 {interval_minutes} 分钟）: ").strip()
@@ -389,5 +403,27 @@ if __name__ == "__main__":
             print("警告：时间间隔过短，已自动设为最低 30 秒，以避免请求过于频繁。")
             interval_seconds = 30
 
+        # vvv 新增：Webhook 开关逻辑 vvv
+        webhook_enabled = False
+        # 检查配置文件是否存在且有效
+        if notifier.check_webhook_configured():
+            while True:
+                enable_choice = input("\n检测到 Webhook 配置文件，是否启用通知功能? (y/n): ").strip().lower()
+                if enable_choice == 'y':
+                    webhook_enabled = True
+                    print("✅ Webhook 通知已启用。")
+                    break
+                elif enable_choice == 'n':
+                    webhook_enabled = False
+                    print("❌ Webhook 通知已禁用。")
+                    break
+                else:
+                    print("输入无效，请输入 'y' 或 'n'。")
+        else:
+            print("\n提示：未找到有效的 'webhook_config.txt' 文件，Webhook 通知功能将保持禁用。")
+            print("如需启用，请创建该文件并在其中填入您的 Webhook URL。")
+        # ^^^ 新增 ^^^
+
         header = get_header()
-        start_monitoring(targets, header, interval_seconds)
+        # 修改：传入 webhook_enabled 参数
+        start_monitoring(targets, header, interval_seconds, webhook_enabled)
